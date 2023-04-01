@@ -23,7 +23,11 @@ public class ProductController {
     public ProductController(ProductService productService) {
         this.productService = productService;
     }
-
+    @GetMapping("/category/{categoryId}")
+    public ResponseEntity<List<ProductDTO>> getProductsByCategoryId(@PathVariable String categoryId) {
+        List<ProductDTO> products = productService.getProductsByCategoryId(categoryId);
+        return new ResponseEntity<>(products, HttpStatus.OK);
+    }
     @PostMapping
     public ResponseEntity<ProductDTO> createProduct(@Valid @RequestBody ProductDTO productDTO) {
         ProductDTO savedProduct = productService.createProduct(productDTO);

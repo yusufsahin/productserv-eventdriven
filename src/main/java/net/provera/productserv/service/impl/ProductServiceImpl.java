@@ -2,6 +2,7 @@ package net.provera.productserv.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import net.provera.productserv.config.RabbitMQConfig;
+import net.provera.productserv.dao.ProductRedisRepository;
 import net.provera.productserv.dao.ProductRepository;
 import net.provera.productserv.dao.model.Product;
 import net.provera.productserv.dto.ProductDTO;
@@ -29,8 +30,9 @@ public class ProductServiceImpl implements ProductService {
     private static final String PRODUCT_CACHE_PREFIX = "product:";
     private final ProductMapper productMapper;
     private final ProductRepository productRepository;
-    private final RabbitTemplate rabbitTemplate;
-    private final RedisTemplate<String, Product> redisTemplate;
+    private final ProductRedisRepository productRedisRepository;
+    private final ProductEventSender productEventSender;
+
 
     @Override
     public ProductDTO createProduct(ProductDTO productDto) {
@@ -42,7 +44,7 @@ public class ProductServiceImpl implements ProductService {
         ProductEvent event = new ProductEvent(createdProduct.getId(), ProductEventType.PRODUCT_CREATED,
                 createdProduct.getName(), createdProduct.getDescription(), createdProduct.getPrice(),
                 createdProduct.getQuantity(), createdProduct.getCategoryId());
-        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, RabbitMQConfig.ROUTING_KEY, event);
+        productEventSender.sendProductEvent(event);
 
         return createdProductDto;
     }
@@ -67,7 +69,7 @@ public class ProductServiceImpl implements ProductService {
         ProductEvent event = new ProductEvent(updatedProduct.getId(), ProductEventType.PRODUCT_UPDATED,
                 updatedProduct.getName(), updatedProduct.getDescription(), updatedProduct.getPrice(),
                 updatedProduct.getQuantity(), updatedProduct.getCategoryId());
-        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, RabbitMQConfig.ROUTING_KEY, event);
+        productEventSender.sendProductEvent(event);
 
         return updatedProductDto;
     }
@@ -87,23 +89,25 @@ public class ProductServiceImpl implements ProductService {
                 optionalProduct.get().getPrice(),
                 optionalProduct.get().getQuantity(),
                 optionalProduct.get().getCategoryId());
-        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, RabbitMQConfig.ROUTING_KEY, event);
+        productEventSender.sendProductEvent(event);
+    }
+
+    @Override
+    public List<ProductDTO> getProductsByCategoryId(String categoryId) {
+        return productRepository.findByCategoryId(categoryId).stream()
+                .map(productMapper::toProductDTO)
+                .collect(Collectors.toList());
     }
 
 
     @Override
     public ProductDTO getProductById(String id) {
-        String cacheKey = PRODUCT_CACHE_PREFIX + id;
-        Product cachedProduct = redisTemplate.opsForValue().get(cacheKey);
-        if (Objects.nonNull(cachedProduct)) {
-            return productMapper.toProductDTOFromCache(cachedProduct);
+        Product product = productRedisRepository.findById(id).orElse(null);
+        if (product == null) {
+            product = productRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Product not found with id: " + id));
+            productRedisRepository.save(product);
         }
-        Optional<Product> product = productRepository.findById(id);
-        ProductDTO productDto = product
-                .map(productMapper::toProductDTO)
-                .orElseThrow(() -> new ResourceNotFoundException("Product not found with id: " + id));
-        redisTemplate.opsForValue().set(cacheKey, product.get(), 1, TimeUnit.HOURS);
-        return productMapper.toProductDTO(product.get());
+        return productMapper.toProductDTO(product);
     }
 
     @Override
